@@ -80,9 +80,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 <div class="h"><h1>⚙️ Impostazioni</h1></div>
 <div class="sc" style="display:flex;justify-content:space-between;align-items:center"><div><div style="font-weight:600;font-size:.9rem">💶 Budget giornaliero</div></div><input type="number" class="fi" style="width:80px;text-align:center;padding:6px" id="bi" value="50" onchange="sb()"></div>
 <div class="sc"><div style="font-weight:600;font-size:.9rem;margin-bottom:4px">💾 Dati</div><div style="font-size:.75rem;color:#94a3b8" id="dc">0 transazioni</div></div>
-<div class="sc"><h3>📤 Salva / Carica dati</h3><p>Poiché usi un file locale, salva i dati manualmente.</p><button class="eb p" onclick="sd()">💾 Salva dati (scarica file)</button><input type="file" id="fi2" accept=".json" style="display:none" onchange="ul()"><button class="eb" onclick="document.getElementById('fi2').click()">📁 Carica dati</button></div>
+<div class="sc"><h3>📤 Esporta dati</h3><p>Backup dei tuoi dati.</p><button class="eb p" onclick="ed()">💾 Scarica backup</button></div>
 <div class="sc" style="margin-top:10px"><div style="font-weight:600;font-size:.9rem">🗑️ Cancella tutto</div><button class="eb" style="width:auto;background:rgba(239,68,68,.1);color:#ef4444;border-color:#ef4444;margin-top:8px" onclick="ca()">Cancella</button></div>
-<div style="text-align:center;margin-top:20px;color:#94a3b8;font-size:.7rem">Spese Giornaliere - Funziona offline</div>
+<div style="text-align:center;margin-top:20px;color:#94a3b8;font-size:.7rem">Spese Giornaliere - Dati automatici</div>
 </div>
 
 <div class="mo" id="md"><div class="ms">
@@ -106,6 +106,93 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 </nav>
 
 <script>
+// === INDEXEDDB STORAGE ===
+var dbName='SpeseDB',dbVersion=1,db=null;
+
+function openDB(){
+  return new Promise(function(resolve,reject){
+    var request=indexedDB.open(dbName,dbVersion);
+    request.onerror=function(){reject('IndexedDB error')};
+    request.onsuccess=function(e){db=e.target.result;resolve(db)};
+    request.onupgradeneeded=function(e){
+      var db=e.target.result;
+      if(!db.objectStoreNames.contains('transactions')){
+        db.createObjectStore('transactions',{keyPath:'id'});
+      }
+      if(!db.objectStoreNames.contains('settings')){
+        db.createObjectStore('settings',{keyPath:'key'});
+      }
+    };
+  });
+}
+
+function saveTransactionDB(t){
+  return new Promise(function(resolve,reject){
+    if(!db){reject('DB not open');return}
+    var tx=db.transaction(['transactions'],'readwrite');
+    var store=tx.objectStore('transactions');
+    var request=store.put(t);
+    request.onsuccess=function(){resolve()};
+    request.onerror=function(){reject()};
+  });
+}
+
+function deleteTransactionDB(id){
+  return new Promise(function(resolve,reject){
+    if(!db){reject('DB not open');return}
+    var tx=db.transaction(['transactions'],'readwrite');
+    var store=tx.objectStore('transactions');
+    var request=store.delete(id);
+    request.onsuccess=function(){resolve()};
+    request.onerror=function(){reject()};
+  });
+}
+
+function getAllTransactionsDB(){
+  return new Promise(function(resolve,reject){
+    if(!db){reject('DB not open');return}
+    var tx=db.transaction(['transactions'],'readonly');
+    var store=tx.objectStore('transactions');
+    var request=store.getAll();
+    request.onsuccess=function(e){resolve(e.target.result)};
+    request.onerror=function(){reject()};
+  });
+}
+
+function saveSettingDB(key,value){
+  return new Promise(function(resolve,reject){
+    if(!db){reject('DB not open');return}
+    var tx=db.transaction(['settings'],'readwrite');
+    var store=tx.objectStore('settings');
+    var request=store.put({key:key,value:value});
+    request.onsuccess=function(){resolve()};
+    request.onerror=function(){reject()};
+  });
+}
+
+function getSettingDB(key){
+  return new Promise(function(resolve,reject){
+    if(!db){reject('DB not open');return}
+    var tx=db.transaction(['settings'],'readonly');
+    var store=tx.objectStore('settings');
+    var request=store.get(key);
+    request.onsuccess=function(e){resolve(e.target.result?e.target.result.value:null)};
+    request.onerror=function(){reject()};
+  });
+}
+
+function clearAllDB(){
+  return new Promise(function(resolve,reject){
+    if(!db){reject('DB not open');return}
+    var tx1=db.transaction(['transactions'],'readwrite');
+    tx1.objectStore('transactions').clear();
+    var tx2=db.transaction(['settings'],'readwrite');
+    tx2.objectStore('settings').clear();
+    resolve();
+  });
+}
+
+// === APP LOGIC ===
 var cats={expense:[{id:'f',n:'Cibo',i:'🍕',c:'#f97316'},{id:'t',n:'Trasporti',i:'🚌',c:'#3b82f6'},{id:'s',n:'Shopping',i:'🛍️',c:'#ec4899'},{id:'b',n:'Bollette',i:'💡',c:'#f59e0b'},{id:'e',n:'Svago',i:'🎮',c:'#8b5cf6'},{id:'h',n:'Salute',i:'💊',c:'#ef4444'},{id:'o',n:'Altro',i:'📦',c:'#64748b'}],income:[{id:'sl',n:'Stipendio',i:'💼',c:'#10b981'},{id:'g',n:'Regalo',i:'🎁',c:'#ec4899'},{id:'i',n:'Invest.',i:'📈',c:'#3b82f6'},{id:'o2',n:'Altro',i:'💰',c:'#f59e0b'}]};
 var tr=[],bg=50,tp='expense',sc=null;
 
@@ -121,22 +208,99 @@ function st(t){tp=t;document.getElementById('be').style.background=t=='expense'?
 function rc(){var g=document.getElementById('cg'),cs=cats[tp];g.innerHTML=cs.map(function(c){return'<button class="cc '+(sc==c.id?'s':'')+'" onclick="sl(\''+c.id+'\')"><span class="ci">'+c.i+'</span><span class="cn">'+c.n+'</span></button>'}).join('')}
 function sl(id){sc=id;rc()}
 
-function sv(){var a=parseFloat(document.getElementById('am').value),d=document.getElementById('de').value.trim(),dt=document.getElementById('da').value;if(!a||a<=0){sh('Inserisci importo');return}if(!sc){sh('Seleziona categoria');return}if(!dt){sh('Seleziona data');return}var cl=cats[tp],c=cl.find(function(x){return x.id==sc});tr.push({id:Date.now(),ty:tp,am:a,ca:sc,cn:c.n,ci:c.i,cc:c.c,de:d||c.n,da:dt,ts:new Date(dt).getTime()});tr.sort(function(a,b){return b.ts-a.ts});rh();cm();sh(tp=='expense'?'Uscita salvata!':'Entrata salvata!')}
+async function sv(){
+  var a=parseFloat(document.getElementById('am').value),d=document.getElementById('de').value.trim(),dt=document.getElementById('da').value;
+  if(!a||a<=0){sh('Inserisci importo');return}
+  if(!sc){sh('Seleziona categoria');return}
+  if(!dt){sh('Seleziona data');return}
+  var cl=cats[tp],c=cl.find(function(x){return x.id==sc});
+  var transaction={id:Date.now(),ty:tp,am:a,ca:sc,cn:c.n,ci:c.i,cc:c.c,de:d||c.n,da:dt,ts:new Date(dt).getTime()};
+  tr.push(transaction);
+  tr.sort(function(a,b){return b.ts-a.ts});
+  await saveTransactionDB(transaction);
+  await saveSettingDB('budget',bg);
+  cm();rh();sh(tp=='expense'?'Uscita salvata!':'Entrata salvata!');
+}
 
-function rh(){var n=new Date(),cm=n.getMonth(),cy=n.getFullYear(),td=n.toISOString().split('T')[0],mi=0,me=0,te=0;tr.forEach(function(t){var d=new Date(t.da);if(d.getMonth()==cm&&d.getFullYear()==cy){if(t.ty=='income')mi+=t.am;else me+=t.am}if(t.da==td&&t.ty=='expense')te+=t.am});var b=mi-me;document.getElementById('ba').textContent=fc(b);document.getElementById('se').textContent=fc(mi);document.getElementById('su').textContent=fc(me);var p=Math.min((te/bg)*100,100);document.getElementById('bf').style.width=p+'%';document.getElementById('bf').style.background=p>90?'#ef4444':p>70?'#f59e0b':'#10b981';document.getElementById('bt').textContent=fc(te)+' / '+fc(bg);var l=document.getElementById('el');if(!tr.length){l.innerHTML='<div class="es"><div class="x">📝</div><p>Nessuna transazione<br>Tocca + per aggiungere</p></div>';return}l.innerHTML=tr.slice(0,50).map(function(t){var e=t.ty=='expense',d=new Date(t.da),ds=d.toLocaleDateString('it-IT',{day:'numeric',month:'short'});return'<div class="ei"><div class="eic" style="background:'+t.cc+'20;color:'+t.cc+'">'+t.ci+'</div><div><div class="et">'+eh(t.de)+'</div><div class="em">'+t.cn+' • '+ds+'</div></div><div class="ea '+(e?'':'i')+'">'+(e?'-':'+')+fc(t.am)+'</div><button class="db" onclick="dl2('+t.id+')">🗑️</button></div>'}).join('')}
-function dl2(id){if(confirm('Eliminare?')){tr=tr.filter(function(t){return t.id!=id});rh();sh('Eliminata')}}
+function rh(){
+  var n=new Date(),cm=n.getMonth(),cy=n.getFullYear(),td=n.toISOString().split('T')[0],mi=0,me=0,te=0;
+  tr.forEach(function(t){var d=new Date(t.da);if(d.getMonth()==cm&&d.getFullYear()==cy){if(t.ty=='income')mi+=t.am;else me+=t.am}if(t.da==td&&t.ty=='expense')te+=t.am});
+  var b=mi-me;
+  document.getElementById('ba').textContent=fc(b);
+  document.getElementById('se').textContent=fc(mi);
+  document.getElementById('su').textContent=fc(me);
+  var p=Math.min((te/bg)*100,100);
+  document.getElementById('bf').style.width=p+'%';
+  document.getElementById('bf').style.background=p>90?'#ef4444':p>70?'#f59e0b':'#10b981';
+  document.getElementById('bt').textContent=fc(te)+' / '+fc(bg);
+  var l=document.getElementById('el');
+  if(!tr.length){l.innerHTML='<div class="es"><div class="x">📝</div><p>Nessuna transazione<br>Tocca + per aggiungere</p></div>';return}
+  l.innerHTML=tr.slice(0,50).map(function(t){var e=t.ty=='expense',d=new Date(t.da),ds=d.toLocaleDateString('it-IT',{day:'numeric',month:'short'});return'<div class="ei"><div class="eic" style="background:'+t.cc+'20;color:'+t.cc+'">'+t.ci+'</div><div><div class="et">'+eh(t.de)+'</div><div class="em">'+t.cn+' • '+ds+'</div></div><div class="ea '+(e?'':'i')+'">'+(e?'-':'+')+fc(t.am)+'</div><button class="db" onclick="dl2('+t.id+')">🗑️</button></div>'}).join('');
+}
 
-function rs(){var n=new Date(),cm=n.getMonth(),cy=n.getFullYear(),ex=tr.filter(function(t){var d=new Date(t.da);return t.ty=='expense'&&d.getMonth()==cm&&d.getFullYear()==cy});var ct={};ex.forEach(function(t){ct[t.ca]=(ct[t.ca]||0)+t.am});var to=Object.values(ct).reduce(function(a,b){return a+b},0),pc=['#f97316','#3b82f6','#ec4899','#f59e0b','#8b5cf6','#ef4444','#06b6d4','#64748b'];if(!to){document.getElementById('pc').innerHTML='<div style="color:#94a3b8">Nessuna spesa</div>';document.getElementById('bc').innerHTML='';return}var cu=0,sl=Object.entries(ct).map(function(x,i){var p=(x[1]/to)*100,c=pc[i%pc.length];cu+=x[1];return{id:x[0],am:x[1],p:p,c:c}});var gs=sl.map(function(s,i){var pt=sl.slice(0,i).reduce(function(a,b){return a+b.p},0);return s.c+' '+pt+'% '+(pt+s.p)+'%'}).join(', ');document.getElementById('pc').innerHTML='<div style="width:160px;height:160px;border-radius:50%;background:conic-gradient('+gs+');margin:0 auto;position:relative"><div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:90px;height:90px;background:#1e293b;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-direction:column"><div style="font-size:1rem;font-weight:700">'+fc(to)+'</div><div style="font-size:.65rem;color:#94a3b8">Totale</div></div></div>';var ds=[];for(var i=6;i>=0;i--){var d=new Date();d.setDate(d.getDate()-i);var ds2=d.toISOString().split('T')[0],de=tr.filter(function(t){return t.da==ds2&&t.ty=='expense'}),dt=de.reduce(function(s,t){return s+t.am},0);ds.push({l:d.toLocaleDateString('it-IT',{weekday:'short'}),v:dt,d:ds2})}var mv=Math.max.apply(null,ds.map(function(x){return x.v}).concat([1]));document.getElementById('bc').innerHTML=ds.map(function(d){var h=(d.v/mv)*100;var t=d.d==n.toISOString().split('T')[0];return'<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px"><div style="font-size:.6rem;font-weight:600">'+(d.v>0?'€'+Math.round(d.v):'')+'</div><div style="width:100%;border-radius:6px 6px 0 0;min-height:3px;height:'+h+'%;background:'+(t?'#10b981':'#334155')+'"></div><div style="font-size:.6rem;color:#94a3b8">'+d.l+'</div></div>'}).join('')}
+async function dl2(id){
+  if(confirm('Eliminare?')){
+    tr=tr.filter(function(t){return t.id!=id});
+    await deleteTransactionDB(id);
+    rh();sh('Eliminata');
+  }
+}
 
-function sb(){bg=parseFloat(document.getElementById('bi').value)||50;rh();sh('Budget aggiornato')}
+function rs(){
+  var n=new Date(),cm=n.getMonth(),cy=n.getFullYear(),ex=tr.filter(function(t){var d=new Date(t.da);return t.ty=='expense'&&d.getMonth()==cm&&d.getFullYear()==cy});
+  var ct={};ex.forEach(function(t){ct[t.ca]=(ct[t.ca]||0)+t.am});
+  var to=Object.values(ct).reduce(function(a,b){return a+b},0),pc=['#f97316','#3b82f6','#ec4899','#f59e0b','#8b5cf6','#ef4444','#06b6d4','#64748b'];
+  if(!to){document.getElementById('pc').innerHTML='<div style="color:#94a3b8">Nessuna spesa</div>';document.getElementById('bc').innerHTML='';return}
+  var cu=0,sl=Object.entries(ct).map(function(x,i){var p=(x[1]/to)*100,c=pc[i%pc.length];cu+=x[1];return{id:x[0],am:x[1],p:p,c:c}});
+  var gs=sl.map(function(s,i){var pt=sl.slice(0,i).reduce(function(a,b){return a+b.p},0);return s.c+' '+pt+'% '+(pt+s.p)+'%'}).join(', ');
+  document.getElementById('pc').innerHTML='<div style="width:160px;height:160px;border-radius:50%;background:conic-gradient('+gs+');margin:0 auto;position:relative"><div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:90px;height:90px;background:#1e293b;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-direction:column"><div style="font-size:1rem;font-weight:700">'+fc(to)+'</div><div style="font-size:.65rem;color:#94a3b8">Totale</div></div></div>';
+  var ds=[];
+  for(var i=6;i>=0;i--){var d=new Date();d.setDate(d.getDate()-i);var ds2=d.toISOString().split('T')[0],de=tr.filter(function(t){return t.da==ds2&&t.ty=='expense'}),dt=de.reduce(function(s,t){return s+t.am},0);ds.push({l:d.toLocaleDateString('it-IT',{weekday:'short'}),v:dt,d:ds2})}
+  var mv=Math.max.apply(null,ds.map(function(x){return x.v}).concat([1]));
+  document.getElementById('bc').innerHTML=ds.map(function(d){var h=(d.v/mv)*100;var t=d.d==n.toISOString().split('T')[0];return'<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px"><div style="font-size:.6rem;font-weight:600">'+(d.v>0?'€'+Math.round(d.v):'')+'</div><div style="width:100%;border-radius:6px 6px 0 0;min-height:3px;height:'+h+'%;background:'+(t?'#10b981':'#334155')+'"></div><div style="font-size:.6rem;color:#94a3b8">'+d.l+'</div></div>'}).join('');
+}
+
+async function sb(){
+  bg=parseFloat(document.getElementById('bi').value)||50;
+  await saveSettingDB('budget',bg);
+  rh();sh('Budget aggiornato');
+}
+
 function ud(){document.getElementById('dc').textContent=tr.length+' transazioni'}
-function ca(){if(confirm('Sicuro?')){tr=[];bg=50;rh();ud();document.getElementById('bi').value=50;sh('Dati cancellati')}}
 
-function sd(){var d={t:tr,b:bg,savedAt:new Date().toISOString()};var b=new Blob([JSON.stringify(d,null,2)],{type:'application/json'});var u=URL.createObjectURL(b);var a=document.createElement('a');a.href=u;a.download='spese_backup_'+new Date().toISOString().split('T')[0]+'.json';document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(u);sh('File salvato! Conservalo')}
+async function ca(){
+  if(confirm('Sicuro?')){
+    tr=[];bg=50;
+    await clearAllDB();
+    await saveSettingDB('budget',50);
+    rh();ud();document.getElementById('bi').value=50;sh('Dati cancellati');
+  }
+}
 
-function ul(){var f=document.getElementById('fi2').files[0];if(!f)return;var r=new FileReader();r.onload=function(e){try{var d=JSON.parse(e.target.result);if(d.t){tr=d.t||[];bg=d.b||50;rh();ud();sh('Dati caricati!')}else{sh('File non valido')}}catch(err){sh('Errore nel file')}};r.readAsText(f)}
+function ed(){
+  var d={t:tr,b:bg,exportedAt:new Date().toISOString()};
+  var b=new Blob([JSON.stringify(d,null,2)],{type:'application/json'});
+  var u=URL.createObjectURL(b);
+  var a=document.createElement('a');a.href=u;a.download='spese_backup_'+new Date().toISOString().split('T')[0]+'.json';document.body.appendChild(a);a.click();document.body.removeChild(a);URL.revokeObjectURL(u);sh('Backup scaricato');
+}
 
-document.addEventListener('DOMContentLoaded',function(){uh();rh();document.getElementById('da').value=new Date().toISOString().split('T')[0];document.getElementById('bi').value=bg;st('expense')});
+// === INIT ===
+document.addEventListener('DOMContentLoaded',async function(){
+  try{
+    await openDB();
+    var savedBudget=await getSettingDB('budget');
+    if(savedBudget!==null)bg=savedBudget;
+    var savedTransactions=await getAllTransactionsDB();
+    if(savedTransactions&&savedTransactions.length>0){
+      tr=savedTransactions;
+      tr.sort(function(a,b){return b.ts-a.ts});
+    }
+    uh();rh();document.getElementById('da').value=new Date().toISOString().split('T')[0];document.getElementById('bi').value=bg;st('expense');
+  }catch(e){
+    console.error('DB Error:',e);
+    sh('Errore database. Ricarica la pagina.');
+  }
+});
 document.getElementById('md').addEventListener('click',function(e){if(e.target==e.currentTarget)cm()});
 </script>
 </body>
